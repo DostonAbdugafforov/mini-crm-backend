@@ -1,9 +1,13 @@
+from django.db.models import Count
+from django.utils import timezone
+from datetime import timedelta
+
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from .filters import LeadFilter
-from .models import Lead, LeadActivity
+from .models import Lead, LeadActivity, LeadStatus
 from .serializers import LeadSerializer, LeadStatusUpdateSerializer, LeadActivitySerializer
 from .pagination import StandardResultsPagination
 
@@ -146,3 +150,26 @@ class LeadViewSet(viewsets.ModelViewSet):
         page = paginator.paginate_queryset(queryset, request)
         serializer = LeadActivitySerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
+
+
+class DashboardStatsView(viewsets.ViewSet):
+    def list(self, request):
+        by_status_qs = Lead.objects.values_list("status").annotate(c=Count("id"))
+        by_status = dict(by_status_qs)
+
+        total = Lead.objects.count()
+        won = by_status.get(LeadStatus.WON, 0)
+        conversion_rate = round((won / total) * 100, 1) if total else 0.0
+
+        since = timezone.now() - timedelta(days=7)
+        new_last_7_days = Lead.objects.filter(created_at__gte=since).count()
+
+        return Response({
+            "success": True,
+            "data": {
+                "total_leads": total,
+                "by_status": {s.value: by_status.get(s.value, 0) for s in LeadStatus},
+                "new_last_7_days": new_last_7_days,
+                "conversion_rate_percent": conversion_rate,
+            },
+        })
